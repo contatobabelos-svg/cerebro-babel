@@ -6,6 +6,14 @@ em ordem alfabética por um **fio que pulsa**. Passe o mouse sobre um nó para v
 
 O app **só lê o disco**. Não move, não renomeia e não apaga nada, e mostra o disco ao vivo.
 
+## Requisitos
+
+- **Node.js** 18+
+- **poppler** (para previews de PDF):
+  - Linux: `sudo apt install poppler-utils` ou `sudo dnf install poppler-utils`
+  - Mac: `brew install poppler`
+- **Chrome/Chromium** (para modo app)
+
 ## Abrir
 
 - Menu de aplicativos, ou o ícone **Cérebro Babel** na Área de trabalho
