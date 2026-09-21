@@ -280,7 +280,8 @@ async function pdfPage(file, st, page) {
 function openPath(p) {
   if (NO_OPEN) { console.log('[teste] abriria:', p); return; }
   const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' };
-  const child = spawn('xdg-open', [p], { detached: true, stdio: 'ignore', env });
+  const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const child = spawn(cmd, [p], { detached: true, stdio: 'ignore', env });
   child.on('error', () => {});
   child.unref();
 }

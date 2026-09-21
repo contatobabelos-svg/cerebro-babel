@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const PW = process.env.PLAYWRIGHT_PATH || '/home/marcos/.npm/_npx/e41f203b7505f1fb/node_modules/playwright';
+const PW = process.env.PLAYWRIGHT_PATH || path.join(os.homedir(), '.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
 const { chromium } = require(PW);
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
