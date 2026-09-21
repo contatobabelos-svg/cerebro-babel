@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="65%"><stop offset="0" stop-color="#0d1f4a"/><stop offset="1" stop-color="#030817"/></radialGradient>
+    <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fe3ff"/><stop offset=".5" stop-color="#8b5cff"/><stop offset="1" stop-color="#e04bff"/></linearGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffffff"/><stop offset=".35" stop-color="#3fe3ff"/><stop offset="1" stop-color="#3fe3ff" stop-opacity="0"/></radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <rect x="3" y="3" width="250" height="250" rx="55" fill="none" stroke="url(#neon)" stroke-opacity=".55" stroke-width="2.5"/>
+  <path d="M70 5 H186" stroke="#3fe3ff" stroke-width="2" stroke-linecap="round" filter="url(#glow)"/>
+  <circle cx="128" cy="124" r="70" fill="url(#core)" opacity=".28"/>
+  <g fill="none" stroke="url(#neon)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M122 60 C106 46 80 50 74 68 C56 69 46 88 53 103 C38 112 39 136 54 144 C47 162 62 181 81 178 C88 196 110 200 122 188 Z"/>
+    <path d="M134 60 C150 46 176 50 182 68 C200 69 210 88 203 103 C218 112 217 136 202 144 C209 162 194 181 175 178 C168 196 146 200 134 188 Z"/>
+    <path d="M122 92 C108 86 94 92 90 106 M60 122 C76 116 94 124 98 138 M122 150 C108 146 96 154 94 168"/>
+    <path d="M134 92 C148 86 162 92 166 106 M196 122 C180 116 162 124 158 138 M134 150 C148 146 160 154 162 168"/>
+  </g>
+  <g fill="#e6efff">
+    <circle cx="90" cy="106" r="5"/><circle cx="98" cy="138" r="5"/><circle cx="94" cy="168" r="4.5"/>
+    <circle cx="166" cy="106" r="5"/><circle cx="158" cy="138" r="5"/><circle cx="162" cy="168" r="4.5"/>
+  </g>
+  <path d="M128 196 V222 M128 222 H104 M128 222 H152" stroke="#3fe3ff" stroke-width="4" stroke-linecap="round" fill="none" filter="url(#glow)" opacity=".85"/>
+  <circle cx="104" cy="222" r="5" fill="#34e6a6"/><circle cx="152" cy="222" r="5" fill="#ffb547"/>
+</svg>

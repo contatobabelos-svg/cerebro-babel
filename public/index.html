@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cérebro Babel</title>
+  <meta name="description" content="Explorador de arquivos em grafo neural, com identidade Babel.">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="grafo" aria-label="Grafo 3D dos arquivos"></div>
+  <div class="vinheta" aria-hidden="true"></div>
+
+  <header class="topo">
+    <div class="marca glass">
+      <img src="/icon.svg" alt="" width="34" height="34">
+      <div>
+        <h1>Cérebro <span>Babel</span></h1>
+        <p><span class="pulso"></span><span id="host">…</span> · <span id="stats">acendendo sinapses…</span></p>
+      </div>
+    </div>
+
+    <nav id="trilha" class="trilha glass" aria-label="Onde você está">
+      <span class="hud-tag">LOCAL</span>
+      <div id="trilha-segs" class="trilha-segs"></div>
+      <span class="trilha-teclas" aria-hidden="true"><kbd>Q</kbd> voltar <kbd>E</kbd> refazer <kbd>Espaço</kbd> cérebro</span>
+    </nav>
+  </header>
+
+  <aside id="painel" class="painel" aria-label="Painel de controle">
+    <button id="painel-abrir" class="painel-abrir glass" aria-expanded="true" aria-controls="painel-corpo" title="Mostrar painel de controle">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg>
+      <span class="sr">Mostrar painel</span>
+    </button>
+    <div id="painel-corpo" class="painel-corpo glass">
+      <div class="painel-head">
+        <span class="hud-tag">// PAINEL DE CONTROLE</span>
+        <button id="painel-recolher" class="icone" aria-expanded="true" aria-controls="painel-corpo" title="Recolher painel" aria-label="Recolher painel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <div class="busca">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <input id="busca" type="search" placeholder="Buscar arquivo ou pasta…" autocomplete="off" spellcheck="false" aria-label="Buscar por nome">
+        <kbd>/</kbd>
+        <div id="resultados" class="glass"></div>
+      </div>
+
+      <button id="btn-home" class="largo" title="Voltar ao cérebro (Espaço)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3"/></svg>
+        Voltar ao cérebro <kbd>Espaço</kbd>
+      </button>
+      <div class="linha nav">
+        <button id="btn-voltar" title="Voltar (Q)"><span aria-hidden="true">‹</span> Voltar <kbd>Q</kbd></button>
+        <button id="btn-avancar" title="Refazer (E)">Refazer <kbd>E</kbd> <span aria-hidden="true">›</span></button>
+      </div>
+      <div class="linha">
+        <div class="grupo" role="group" aria-label="Zoom">
+          <span>Zoom</span>
+          <button id="zoom-menos" title="Afastar" aria-label="Afastar">−</button>
+          <button id="zoom-mais" title="Aproximar" aria-label="Aproximar">+</button>
+        </div>
+        <div class="grupo" role="group" aria-label="Tamanho dos nós">
+          <span>Nós</span>
+          <button id="nos-menos" title="Nós menores" aria-label="Nós menores">−</button>
+          <button id="nos-mais" title="Nós maiores" aria-label="Nós maiores">+</button>
+        </div>
+      </div>
+
+      <div class="secao">
+        <span class="hud-tag">CORES</span>
+        <ul id="legenda" class="legenda"></ul>
+      </div>
+      <div class="secao">
+        <span class="hud-tag">ATALHOS</span>
+        <ul class="atalhos">
+          <li><kbd>Espaço</kbd> voltar ao cérebro</li>
+          <li><kbd>Q</kbd> voltar</li>
+          <li><kbd>E</kbd> refazer</li>
+          <li><kbd>/</kbd> buscar</li>
+          <li><kbd>clique</kbd> focar pasta</li>
+          <li><kbd>2×</kbd> entrar / visualizar</li>
+          <li><kbd>Esc</kbd> fechar</li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <svg id="guia" aria-hidden="true"><polyline points=""/><g class="ret"><circle r="7"/><circle r="2"/><path d="M-12 0h-4M12 0h4M0 -12v-4M0 12v4"/></g></svg>
+  <div id="popup" role="tooltip"></div>
+
+  <div id="visor" class="visor" role="dialog" aria-modal="true" aria-labelledby="visor-titulo" hidden>
+    <div id="visor-fundo" class="visor-fundo"></div>
+    <div class="visor-caixa">
+      <i class="canto tl"></i><i class="canto tr"></i><i class="canto bl"></i><i class="canto br"></i>
+      <header class="visor-topo">
+        <div class="visor-nome">
+          <span class="pop-head"><span class="dot"></span><span id="visor-tipo" class="tipo"></span></span>
+          <h2 id="visor-titulo"></h2>
+        </div>
+        <button id="visor-abrir" class="largo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+          Abrir no aplicativo padrão
+        </button>
+        <button id="visor-fechar" class="icone" aria-label="Fechar (Esc)" title="Fechar (Esc)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div id="visor-meta" class="visor-meta mono"></div>
+      <div id="visor-corpo" class="visor-corpo"></div>
+    </div>
+  </div>
+  <div id="toast" class="glass" role="status"></div>
+
+  <div class="intro" aria-hidden="true">
+    <img src="/icon.svg" alt="" width="96" height="96">
+    <h2>Cérebro <span>Babel</span></h2>
+    <p>conectando sinapses…</p>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
