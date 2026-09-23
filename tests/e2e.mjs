@@ -1,9 +1,9 @@
 // Teste ponta a ponta do Cérebro Babel.
-// Sobe um servidor próprio na porta 3078 com CEREBRO_NO_OPEN=1 (nunca chama xdg-open)
-// e ainda intercepta /api/open no navegador. Screenshots vão para prints/.
+// Sobe um servidor próprio na porta 3078 com CEREBRO_FONTE=teste: um banco falso em memória (fonte-teste.js),
+// então o teste nunca toca no Supabase de verdade. Screenshots vão para prints/.
 import { spawn, execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync, symlinkSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
 import os from 'node:os';
@@ -25,30 +25,29 @@ const ok = (cond, msg) => { console.log(`${cond ? '  ok ' : 'FALHA'}  ${msg}`); 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const srv = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-  env: { ...process.env, CEREBRO_PORT: String(PORT), CEREBRO_NO_OPEN: '1' }, stdio: ['ignore', 'pipe', 'inherit'],
+  env: { ...process.env, CEREBRO_PORT: String(PORT), CEREBRO_FONTE: 'teste' }, stdio: ['ignore', 'pipe', 'inherit'],
 });
 let srvLog = '';
 srv.stdout.on('data', (d) => { srvLog += d; });
 for (let i = 0; i < 50 && !srvLog.includes('Cérebro Babel em'); i++) await sleep(100);
 
-const post = (body, headers = { 'Content-Type': 'application/json', 'X-Cerebro': '1' }) =>
-  fetch(`${B}/api/open`, { method: 'POST', headers, body: JSON.stringify(body) });
-
 try {
   console.log('\n[segurança]');
-  ok((await post({ path: '/etc/passwd' })).status === 403, 'abrir recusa /etc/passwd');
-  ok((await post({ path: '../../etc' })).status === 403, 'abrir recusa path traversal ../../etc');
-  ok((await post({ path: '/home' })).status === 403, 'abrir recusa /home (pai da home)');
-  ok((await post({ path: '.ssh' })).status === 403, 'abrir recusa pasta oculta');
-  const link = path.join(ROOT, 'tests', 'link-para-fora');
-  rmSync(link, { force: true });
-  symlinkSync('/etc', link);
-  ok((await post({ path: path.relative(os.homedir(), link) })).status === 403, 'abrir recusa symlink que aponta para fora da home');
-  ok((await fetch(`${B}/api/text?path=${encodeURIComponent(path.relative(os.homedir(), link) + '/hostname')}`)).status === 403, 'prévia recusa symlink para fora');
-  rmSync(link, { force: true });
-  ok((await post({ path: 'Imagens' }, { 'Content-Type': 'application/json' })).status === 403, 'abrir exige cabeçalho X-Cerebro (anti-CSRF)');
-  const r = await post({ path: 'Imagens' });
-  ok(r.status === 200 && (await r.json()).mocked === true, 'abrir caminho válido responde ok (simulado, sem xdg-open)');
+  const raw = (p, init) => fetch(B + p, init);
+  ok((await raw('/api/list', { method: 'POST' })).status === 405, 'API só aceita leitura: POST em /api/list é recusado (405)');
+  ok((await raw('/api/open', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cerebro': '1' }, body: '{"path":"x"}' })).status === 405, '/api/open não existe mais (nada abre programas no computador)');
+  ok((await raw('/api/list?path=nao_existe')).status === 404, 'schema inexistente responde 404');
+  ok((await raw('/api/list?path=public%00x')).status === 400, 'caminho com byte nulo é recusado (400)');
+  ok((await raw('/api/list?path=public/cadastros/x/y/z')).status === 400, 'caminho fundo demais é recusado (400)');
+  const info = await (await raw('/api/info')).json();
+  ok(info.fonte === 'teste' && !/sbp_|eyJ/.test(JSON.stringify(info)), 'info não vaza token nem chave');
+  const usr = await (await raw('/api/list?path=auth/users&limit=1')).json();
+  const usrTxt = await (await raw(`/api/text?path=${encodeURIComponent(usr.items[0].path)}&full=1`)).json();
+  ok(usrTxt.text.includes('(oculto)') && !usrTxt.text.includes('$2a$10') && !/tok0|segredo/.test(usrTxt.text), 'senha e tokens de auth.users saem ocultos');
+  ok(!/\$2a\$10|segredo/.test(JSON.stringify(await (await raw('/api/search?q=segredo')).json())), 'busca não encontra valor de coluna secreta');
+  const perf = await (await raw('/api/list?path=public/perfis&limit=1')).json();
+  const im = await raw(`/api/media?path=${encodeURIComponent(perf.items[0].path)}`);
+  ok(im.status === 200 && im.headers.get('content-type') === 'image/png' && im.headers.get('content-security-policy') === 'sandbox', 'imagem dentro de uma linha é servida com CSP sandbox');
   const hostStatus = await new Promise((res) => http.get({ host: '127.0.0.1', port: PORT, path: '/api/info', headers: { Host: 'evil.example:3078' } }, (r) => { r.resume(); res(r.statusCode); }).on('error', () => res(0)));
   ok(hostStatus === 421, 'Host estranho é recusado (anti DNS-rebinding)');
 
@@ -67,26 +66,23 @@ try {
   }
 
   console.log('\n[navegador 1440×900]');
-  // usa o Google Chrome do sistema (tem H.264, como o lançador); cai no Chromium do Playwright se não houver
+  // usa o Google Chrome do sistema; cai no Chromium do Playwright se não houver
   const chrome = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'].find((f) => existsSync(f));
-  const browser = await chromium.launch({ executablePath: chrome, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+  const browser = await chromium.launch({ executablePath: chrome, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   const erros = [];
   page.on('console', (m) => { if (m.type() === 'error') erros.push(m.text()); });
   page.on('pageerror', (e) => erros.push(String(e)));
   page.on('response', (r) => { if (r.status() >= 400) erros.push(`HTTP ${r.status()} ${decodeURIComponent(r.url())}`); });
-  const aberturas = [];
-  await page.route('**/api/open', (route) => {
-    aberturas.push(JSON.parse(route.request().postData() || '{}').path);
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"mocked":true}' });
-  });
-  // No Chrome headless com swiftshader (~1 fps) as transições CSS ficam pendentes para sempre
-  // (acontece também na v1). Só nos testes, desliga as transições para os prints saírem estáveis.
+  // No Chrome headless com swiftshader (~1 fps) as transições CSS ficam pendentes para sempre.
+  // Só nos testes, desliga as transições para os prints saírem estáveis.
   const semTransicao = () => page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; }' });
   const abrir = async () => {
     await page.goto(B, { timeout: 90000 });
     await semTransicao();
+    // o painel do Supabase só abre por clique explícito: captura em vez de abrir uma aba
+    await page.evaluate(() => { window.__abertos = []; window.open = (u) => { window.__abertos.push(u); return null; }; });
     await page.waitForFunction(() => window.__cerebro && window.__cerebro.nodes.size > 5, null, { timeout: 20000 });
   };
   const st = () => page.evaluate(() => window.__cerebro.state());
@@ -96,18 +92,22 @@ try {
   await abrir();
   await sleep(7000);
   const top = await page.evaluate(() => [...window.__cerebro.nodes.values()].filter((n) => n.depth === 1).map((n) => n.name));
-  ok(top.includes('Imagens') && top.includes('Documentos'), `linhas neurais carregadas (${top.length} no 1º nível)`);
-  await page.screenshot({ path: path.join(PRINTS, 'v2-01-cerebro.png') });
+  ok(['public', 'auth', 'storage', 'Edge Functions', 'Buckets'].every((n) => top.includes(n)), `linhas neurais: schemas, Edge Functions e Buckets (${top.length} no 1º nível: ${top.join(', ')})`);
+  ok(await page.evaluate(() => document.querySelector('#host').textContent.includes('Reino')) && (await page.title()).includes('Reino'), 'centro do cérebro é o projeto Supabase (nome no topo e no título)');
+  ok(!(await page.evaluate(() => document.body.innerText)).includes('~/'), 'nenhum resto de "~/" (pasta do computador) na tela');
+  await page.screenshot({ path: path.join(PRINTS, 'v3-01-cerebro.png') });
 
   // ---------- painel de controle ----------
   const noPainel = await page.evaluate(() => ['#busca', '#legenda li', '#zoom-mais', '#zoom-menos', '#nos-mais', '#nos-menos', '#btn-home', '#btn-voltar', '#btn-avancar', '.atalhos li']
     .every((s) => document.querySelector('#painel ' + s)));
   ok(noPainel, 'painel inferior esquerdo reúne busca, legenda, zoom, nós, voltar ao cérebro e atalhos');
+  const legenda = await page.evaluate(() => [...document.querySelectorAll('#legenda li')].map((l) => l.textContent));
+  ok(['Schema', 'Tabela', 'View', 'Função', 'Linha', 'Edge Function', 'Bucket'].every((l) => legenda.includes(l)), `legenda fala de banco (${legenda.join(', ')})`);
   await page.click('#painel-recolher');
   await sleep(600);
   const recolhido = await page.evaluate(() => ({ cls: document.querySelector('#painel').classList.contains('recolhido'), ls: localStorage.getItem('cerebro.painel'), botao: getComputedStyle(document.querySelector('#painel-abrir')).opacity, corpo: getComputedStyle(document.querySelector('#painel-corpo')).visibility }));
   ok(recolhido.cls && recolhido.ls === 'recolhido' && recolhido.botao === '1' && recolhido.corpo === 'hidden', 'botão recolhe o painel e guarda o estado');
-  await page.screenshot({ path: path.join(PRINTS, 'v2-02-painel-recolhido.png') });
+  await page.screenshot({ path: path.join(PRINTS, 'v3-02-painel-recolhido.png') });
   await abrir();
   ok(await page.evaluate(() => document.querySelector('#painel').classList.contains('recolhido')), 'painel continua recolhido depois de recarregar');
   await page.click('#painel-abrir');
@@ -142,9 +142,9 @@ try {
   const longe = async () => { await page.mouse.move(1430, 450); await sleep(700); };
 
   // ---------- card HUD ao passar o mouse ----------
-  await focar('Documentos');
-  const hp = await apontar('Documentos');
-  ok(hp.viu, 'hover em pasta mostra o card');
+  await focar('public');
+  const hp = await apontar('public');
+  ok(hp.viu, 'hover em schema mostra o card');
   await esperar(() => document.querySelector('#popup .grafico .pilha i'), null, 10000);
   await sleep(1500);
   const hud = await page.evaluate(() => {
@@ -153,19 +153,21 @@ try {
       cantos: p.querySelectorAll('.canto').length, meta: p.querySelectorAll('.hud-meta dt').length, medidor: !!p.querySelector('.medidor .barra i'),
       grafico: p.querySelectorAll('.grafico li').length, trilha: !!p.querySelector('.onde .raiz'), scan: !!p.querySelector('.scan'),
       guia: document.querySelector('#guia').classList.contains('on'), mono: getComputedStyle(p.querySelector('.hud-meta dd')).fontFamily,
+      tipo: p.querySelector('.tipo').textContent, legivel: p.textContent,
     };
   });
-  ok(hud.cantos === 4 && hud.meta >= 3 && hud.medidor && hud.grafico >= 1 && hud.trilha && hud.scan && hud.guia && /mono/i.test(hud.mono),
+  ok(hud.cantos === 4 && hud.meta >= 3 && hud.medidor && hud.grafico >= 2 && hud.trilha && hud.scan && hud.guia && /mono/i.test(hud.mono),
     `card HUD: cantos, metadados mono, medidor, gráfico por tipo (${hud.grafico}), breadcrumb, varredura e linha-guia`);
-  await page.screenshot({ path: path.join(PRINTS, 'v2-03-hover-pasta.png') });
-  await page.locator('#popup').screenshot({ path: path.join(PRINTS, 'v2-03b-card-pasta.png') });
+  ok(hud.tipo === 'Schema' && /TAB|Tabela|tabela/i.test(hud.legivel), `card do schema fala de banco ("${hud.tipo}")`);
+  await page.screenshot({ path: path.join(PRINTS, 'v3-03-hover-schema.png') });
+  await page.locator('#popup').screenshot({ path: path.join(PRINTS, 'v3-03b-card-schema.png') });
 
-  // ---------- duplo clique em pasta: entra no próprio Cérebro, sem /api/open ----------
+  // ---------- duplo clique em schema: entra nele dentro do próprio Cérebro ----------
   await page.mouse.dblclick(hp.c.x, hp.c.y);
-  const entrou = await esperar(() => window.__cerebro.state().focusId === 'Documentos' && window.__cerebro.state().helix.length > 0, null, 15000);
+  const entrou = await esperar(() => window.__cerebro.state().focusId === 'public' && window.__cerebro.state().helix.length > 0, null, 15000);
   await sleep(1500);
-  ok(entrou, 'duplo clique em pasta entra nela (foco + DNA)');
-  ok(aberturas.length === 0, 'duplo clique em pasta NÃO chama /api/open (nada de Thunar)');
+  ok(entrou, 'duplo clique em schema entra nele (foco + DNA)');
+  ok(await page.evaluate(() => window.__abertos.length === 0), 'duplo clique não abre nada fora do app');
   let s1 = await st();
   ok(JSON.stringify(s1.back) === '[null]', `duplo clique entra no histórico (voltar: ${JSON.stringify(s1.back)})`);
   await longe();
@@ -176,7 +178,7 @@ try {
   const foco = await page.evaluate(() => {
     const c = window.__cerebro;
     const s = c.state();
-    const outro = c.nodes.get('Imagens');
+    const outro = c.nodes.get('auth');
     const filho = c.nodes.get(s.helix[0]);
     let opOutro = 1;
     outro.__obj.traverse((m) => { if (m.isMesh) opOutro = Math.min(opOutro, m.material.opacity); });
@@ -186,7 +188,7 @@ try {
     return { dimK: s.dimK, outroDim: outro.__dimmed, filhoDim: filho.__dimmed, opOutro, opFilho, lblOutro };
   });
   ok(foco.dimK > 0.9 && foco.outroDim && !foco.filhoDim && foco.opOutro < 0.2 && foco.opFilho > 0.9 && foco.lblOutro < 0.3,
-    `foco esmaece as outras pastas (opacidade ${foco.opOutro.toFixed(2)}, rótulo ${foco.lblOutro}) e mantém os filhos acesos (${foco.opFilho.toFixed(2)})`);
+    `foco esmaece os outros schemas (opacidade ${foco.opOutro.toFixed(2)}, rótulo ${foco.lblOutro}) e mantém os filhos acesos (${foco.opFilho.toFixed(2)})`);
 
   // ---------- DNA em pé com rótulos ----------
   const dna = await page.evaluate(() => {
@@ -201,6 +203,7 @@ try {
     const lbls = [...document.querySelectorAll('.dna')].filter((e) => e.style.display !== 'none');
     return {
       n: kids.length, R: h.R, raioErro: Math.max(...raios.map((r) => Math.abs(r - h.R))), altura: Math.max(...ys) - Math.min(...ys), pares, desce,
+      kinds: [...new Set(kids.map((k) => k.kind))].sort().join(','),
       rotulos: lbls.length, texto: lbls[0]?.textContent || '', sobrepostos: (() => {
         const rs = lbls.map((e) => e.firstChild.getBoundingClientRect());
         let k = 0;
@@ -209,62 +212,113 @@ try {
       })(),
     };
   });
-  ok(dna.n > 10 && dna.raioErro < 0.5 && dna.pares && dna.desce && dna.altura > dna.R * 2,
-    `arquivos em dupla hélice vertical (${dna.n} pontos, raio ${dna.R.toFixed(1)}, altura ${dna.altura.toFixed(0)}, pares no mesmo nível)`);
+  ok(dna.n > 10 && dna.raioErro < 0.5 && dna.pares && dna.desce && dna.altura > dna.R * 1.5,
+    `tabelas e funções em dupla hélice vertical (${dna.n} pontos, raio ${dna.R.toFixed(1)}, altura ${dna.altura.toFixed(0)}, pares no mesmo nível)`);
+  ok(dna.kinds === 'funcao,tabela,view', `o schema public mostra tabelas, views e funções (${dna.kinds})`);
   ok(dna.rotulos >= 8 && /·/.test(dna.texto) && dna.sobrepostos <= 1, `rótulos presos aos pontos do DNA (${dna.rotulos} visíveis, ${dna.sobrepostos} sobreposições): "${dna.texto.slice(0, 60)}"`);
   const g0 = (await st()).spin;
   await sleep(2500);
   ok((await st()).spin > g0, 'a hélice gira devagar');
-  await page.screenshot({ path: path.join(PRINTS, 'v2-04-foco-dna.png') });
+  ok(await page.evaluate(() => window.__cerebro.links().some((l) => l.type === 'fk' && (l.source.id || l.source) === 'public/academy_aulas' && (l.target.id || l.target) === 'public/academy_trilhas')), 'chave estrangeira academy_aulas → academy_trilhas vira um fio entre as duas tabelas');
+  await page.screenshot({ path: path.join(PRINTS, 'v3-04-foco-dna.png') });
 
-  // ---------- hover em arquivo do DNA ----------
+  // ---------- card de tabela: colunas, RLS, políticas ----------
+  await page.evaluate(() => window.__cerebro.showPopup(window.__cerebro.nodes.get('public/cadastros')));
+  await esperar(() => document.querySelector('#popup ul.colunas li'), null, 10000);
+  const tab = await page.evaluate(() => {
+    const p = document.querySelector('#popup');
+    return { cols: p.querySelectorAll('ul.colunas li').length, pk: !!p.querySelector('ul.colunas li.pk'), rls: /RLS/.test(p.textContent) && /ligado/.test(p.textContent), pol: /cadastros|anon insere/i.test(p.textContent) };
+  });
+  ok(tab.cols >= 5 && tab.pk && tab.rls && tab.pol, `card da tabela mostra colunas (${tab.cols}), chave primária, RLS e políticas`);
+  await page.locator('#popup').screenshot({ path: path.join(PRINTS, 'v3-05-card-tabela.png') });
+  await longe();
+
+  // ---------- hover em função do DNA e visor com o SQL ----------
   await page.evaluate(() => window.__cerebro.setSpin(false));
   await sleep(1200);
   const naTela = (pred) => page.evaluate(`(() => { const c = window.__cerebro; return c.state().helix.map((id) => c.nodes.get(id)).filter(${pred})
     .map((n) => ({ id: n.id, ...c.graph.graph2ScreenCoords(n.x, n.y, n.z) })).filter((p) => p.x > 420 && p.x < 1300 && p.y > 140 && p.y < 820)
     .sort((a, b) => Math.abs(a.x - 800) - Math.abs(b.x - 800))[0]?.id })()`);
-  const pdf = await naTela("(n) => /\\.pdf$/i.test(n.name)");
-  if (pdf) {
-    const h = await apontar(pdf);
-    ok(h.viu, `hover em arquivo do DNA mostra o card ("${h.nome}")`);
-    await esperar(() => { const i = document.querySelector('#popup .media.pdf img'); return i && i.complete && i.naturalWidth > 0; }, null, 20000);
-    await sleep(800);
-    ok(await page.evaluate(() => { const i = document.querySelector('#popup .media.pdf img'); return !!i && i.naturalWidth > 0; }), 'card do PDF mostra a 1ª página');
-    await page.screenshot({ path: path.join(PRINTS, 'v2-05-hover-arquivo-dna.png') });
-    await page.locator('#popup').screenshot({ path: path.join(PRINTS, 'v2-05b-card-pdf.png') });
+  const fn = await naTela("(n) => n.kind === 'funcao'");
+  if (fn) {
+    const h = await apontar(fn);
+    ok(h.viu, `hover em função do DNA mostra o card ("${h.nome}")`);
+    await esperar(() => /FUNCTION/.test(document.querySelector('#popup pre.txt')?.textContent || ''), null, 10000);
+    ok(await page.evaluate(() => /CREATE OR REPLACE FUNCTION/.test(document.querySelector('#popup pre.txt')?.textContent || '')), 'card da função mostra o SQL da definição');
+    await page.screenshot({ path: path.join(PRINTS, 'v3-06-hover-funcao.png') });
 
-    // ---------- duplo clique em arquivo: visor grande dentro do app ----------
+    // duplo clique em função: visor grande dentro do app
     await page.mouse.dblclick(h.c.x, h.c.y);
     const visorAbriu = await esperar(() => !document.querySelector('#visor').hidden, null, 8000);
-    await esperar(() => { const i = document.querySelector('#pdf-img'); return i && i.complete && i.naturalWidth > 0; }, null, 30000);
-    await sleep(1500);
-    ok(visorAbriu && aberturas.length === 0, 'duplo clique em arquivo abre o visor do app (sem /api/open)');
-    ok(await page.evaluate(() => { const i = document.querySelector('#pdf-img'); return !!i && i.naturalWidth >= 800; }), 'visor mostra a página do PDF em tamanho grande');
-    await page.screenshot({ path: path.join(PRINTS, 'v2-06-visor-pdf.png') });
+    await esperar(() => /FUNCTION/.test(document.querySelector('.v-txt')?.textContent || ''), null, 10000);
+    ok(visorAbriu && await page.evaluate(() => window.__abertos.length === 0), 'duplo clique em função abre o visor do app (sem abrir nada fora)');
+    ok(await page.evaluate(() => /CREATE OR REPLACE FUNCTION/.test(document.querySelector('.v-txt')?.textContent || '')), 'visor mostra o SQL completo da função');
+    await page.screenshot({ path: path.join(PRINTS, 'v3-07-visor-funcao.png') });
     await page.click('#visor-abrir');
-    for (let i = 0; i < 20 && !aberturas.length; i++) await sleep(200);
-    ok(aberturas[0] === pdf, 'botão "abrir no aplicativo padrão" pede o xdg-open só quando clicado (interceptado)');
-    aberturas.length = 0;
+    await sleep(300);
+    const abertos = await page.evaluate(() => window.__abertos.slice());
+    ok(abertos.length === 1 && abertos[0].startsWith('https://supabase.com/dashboard/project/teste/database/functions'), `botão "Abrir no painel do Supabase" só abre no clique (${abertos[0]})`);
+    await page.evaluate(() => { window.__abertos.length = 0; });
     await page.keyboard.press('Escape');
     await sleep(500);
     ok(await page.evaluate(() => document.querySelector('#visor').hidden), 'Esc fecha o visor');
-  } else ok(false, 'achar PDF de Documentos visível no DNA');
-  const md = await page.evaluate(() => window.__cerebro.state().helix.find((id) => /\.(md|txt)$/i.test(id)));
-  if (md) {
-    await page.evaluate((id) => window.__cerebro.openVisor(window.__cerebro.nodes.get(id)), md);
-    await esperar(() => (document.querySelector('.v-txt')?.textContent || 'lendo…') !== 'lendo…', null, 8000);
-    ok(await page.evaluate(() => (document.querySelector('.v-txt')?.textContent || '').length > 20), 'visor mostra texto completo');
-    await page.screenshot({ path: path.join(PRINTS, 'v2-06b-visor-texto.png') });
-    await page.keyboard.press('Escape');
-  }
+  } else ok(false, 'achar função de public visível no DNA');
   await longe();
   await page.evaluate(() => window.__cerebro.setSpin(true));
 
+  // ---------- linhas de uma tabela: imagem, texto e segredos ----------
+  await page.evaluate(() => window.__cerebro.navigate('public/perfis'));
+  await esperar(() => window.__cerebro.state().focusId === 'public/perfis' && window.__cerebro.state().helix.length >= 6, null, 15000);
+  await cameraParada();
+  const comImg = await page.evaluate(() => [...window.__cerebro.nodes.values()].find((n) => n.parent === 'public/perfis' && n.img)?.id);
+  ok(!!comImg, 'linha com foto ganha imagem (perfis)');
+  if (comImg) {
+    await page.evaluate((id) => window.__cerebro.showPopup(window.__cerebro.nodes.get(id)), comImg);
+    await esperar(() => { const i = document.querySelector('#popup .media img'); return i && i.complete && i.naturalWidth > 0; }, null, 10000);
+    ok(await page.evaluate(() => { const i = document.querySelector('#popup .media img'); return !!i && i.naturalWidth > 0; }), 'card da linha mostra a foto guardada na coluna');
+    await esperar(() => /"nome"/.test(document.querySelector('#popup pre.txt')?.textContent || ''), null, 10000);
+    ok(await page.evaluate(() => /"nome"/.test(document.querySelector('#popup pre.txt')?.textContent || '') && !/data:image\/png;base64,iVBOR/.test(document.querySelector('#popup pre.txt').textContent)), 'card da linha mostra o JSON sem despejar o base64');
+    await longe();
+    await page.evaluate((id) => window.__cerebro.openVisor(window.__cerebro.nodes.get(id)), comImg);
+    await esperar(() => /"nome"/.test(document.querySelector('.v-txt')?.textContent || ''), null, 8000);
+    ok(await page.evaluate(() => !!document.querySelector('.v-img-linha') && /"nome"/.test(document.querySelector('.v-txt').textContent)), 'visor da linha mostra a foto e o registro inteiro');
+    await page.screenshot({ path: path.join(PRINTS, 'v3-08-visor-linha.png') });
+    await page.keyboard.press('Escape');
+  }
+  await page.evaluate(() => window.__cerebro.navigate('auth/users'));
+  await esperar(() => window.__cerebro.state().focusId === 'auth/users' && window.__cerebro.state().helix.length >= 3, null, 15000);
+  const linhaAuth = await page.evaluate(() => [...window.__cerebro.nodes.values()].find((n) => n.parent === 'auth/users')?.id);
+  await page.evaluate((id) => window.__cerebro.openVisor(window.__cerebro.nodes.get(id)), linhaAuth);
+  await esperar(() => /"email"/.test(document.querySelector('.v-txt')?.textContent || ''), null, 8000);
+  ok(await page.evaluate(() => { const t = document.querySelector('.v-txt').textContent; return /"email"/.test(t) && t.includes('(oculto)') && !t.includes('$2a$10'); }), 'visor de auth.users esconde a senha e os tokens');
+  await page.keyboard.press('Escape');
+  await longe();
+
+  // ---------- Edge Functions e Buckets ----------
+  await page.evaluate(() => window.__cerebro.navigate('@edge'));
+  await esperar(() => window.__cerebro.state().focusId === '@edge' && window.__cerebro.state().helix.length === 4, null, 15000);
+  ok((await st()).helix.length === 4, 'Edge Functions lista as 4 funções');
+  await page.evaluate(() => window.__cerebro.openVisor(window.__cerebro.nodes.get('@edge/reino-login')));
+  await esperar(() => /Deno\.serve|slug|reino-login/.test(document.querySelector('.v-txt')?.textContent || ''), null, 8000);
+  ok(await page.evaluate(() => /reino-login/.test(document.querySelector('.v-txt').textContent)), 'visor da Edge Function mostra o código');
+  await page.click('#visor-abrir');
+  await sleep(300);
+  ok(await page.evaluate(() => window.__abertos.at(-1) === 'https://supabase.com/dashboard/project/teste/functions/reino-login/details'), 'abrir Edge Function leva ao painel dela');
+  await page.evaluate(() => { window.__abertos.length = 0; });
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__cerebro.navigate('@buckets/avatares'));
+  await esperar(() => window.__cerebro.state().focusId === '@buckets/avatares' && window.__cerebro.state().helix.length === 1, null, 15000);
+  ok(await page.evaluate(() => window.__cerebro.nodes.get('@buckets/avatares/u1%2Favatar.png')?.img?.startsWith('/api/media')), 'arquivo de bucket é imagem servida pelo servidor (a chave nunca vai ao navegador)');
+  await longe();
+
   // ---------- Espaço / Q / E ----------
-  await page.evaluate(() => window.__cerebro.navigate('Imagens'));
-  await esperar(() => window.__cerebro.state().focusId === 'Imagens' && window.__cerebro.state().helix.length > 0, null, 15000);
-  const mais = await page.evaluate(() => window.__cerebro.nodes.has('Imagens#mais') && window.__cerebro.nodes.get('Imagens#mais').name);
-  ok(!!mais, `pasta grande mostra nó "${mais}" no fim do DNA`);
+  await page.evaluate(() => window.__cerebro.navigate('public'));
+  await esperar(() => window.__cerebro.state().focusId === 'public', null, 15000);
+  await page.evaluate(() => window.__cerebro.clearHistory());
+  await page.evaluate(() => window.__cerebro.navigate('public/cliques'));
+  await esperar(() => window.__cerebro.state().focusId === 'public/cliques' && window.__cerebro.state().helix.length > 0, null, 15000);
+  const mais = await page.evaluate(() => window.__cerebro.nodes.has('public/cliques#mais') && window.__cerebro.nodes.get('public/cliques#mais').name);
+  ok(!!mais, `tabela grande mostra nó "${mais}" no fim do DNA`);
   await page.locator('#grafo canvas').first().focus().catch(() => {});
   await page.evaluate(() => document.activeElement?.blur());
   const tecla = async (k, esperado, rotulo) => {
@@ -275,46 +329,40 @@ try {
     await sleep(900);
   };
   await tecla('Space', null, 'Espaço volta ao cérebro');
-  await tecla('q', 'Imagens', 'Q volta para trás');
-  await tecla('q', 'Documentos', 'Q de novo');
-  await tecla('e', 'Imagens', 'E refaz');
+  await tecla('q', 'public/cliques', 'Q volta para trás');
+  await tecla('q', 'public', 'Q de novo');
+  await tecla('e', 'public/cliques', 'E refaz');
   await tecla('e', null, 'E refaz de novo');
-  await tecla('q', 'Imagens', 'Q depois do E');
+  await tecla('q', 'public/cliques', 'Q depois do E');
   await page.click('#busca');
   await page.keyboard.type('qe ');
   await sleep(600);
-  ok((await st()).focusId === 'Imagens', 'Q/E/Espaço não navegam enquanto digita na busca');
+  ok((await st()).focusId === 'public/cliques', 'Q/E/Espaço não navegam enquanto digita na busca');
   await page.fill('#busca', '');
   await page.evaluate(() => document.activeElement.blur());
-  // Q sem histórico sobe para a pasta pai
-  await page.evaluate(async () => {
-    const c = window.__cerebro;
-    const sub = [...c.nodes.values()].find((n) => n.parent === 'Imagens' && n.type === 'dir');
-    if (sub) await c.navigate(sub.id);
-  });
-  const sub = (await st()).focusId;
-  if (sub && sub !== 'Imagens') {
-    await page.evaluate(() => window.__cerebro.clearHistory());
-    await tecla('q', 'Imagens', `Q sem histórico sobe de "${sub}" para a pasta pai`);
-  }
+  const linhas = await page.evaluate(() => [...window.__cerebro.nodes.values()].filter((n) => n.parent === 'public/cliques' && n.type === 'file').length);
+  ok(linhas === 150, `a primeira página da tabela traz 150 linhas (${linhas}) e o resto fica atrás do nó "+mais"`);
+  // Q sem histórico sobe para o schema
+  await page.evaluate(() => window.__cerebro.clearHistory());
+  await tecla('q', 'public', 'Q sem histórico sobe da tabela para o schema');
   await cameraParada();
   await sleep(2500);
-  await page.screenshot({ path: path.join(PRINTS, 'v2-07-foco-imagens.png') });
+  await page.screenshot({ path: path.join(PRINTS, 'v3-09-foco-public.png') });
 
-  // ---------- clique na pasta em foco recolhe e volta um nível ----------
+  // ---------- clique no schema em foco recolhe e volta um nível ----------
   await page.evaluate(() => window.__cerebro.setSpin(false));
-  const hi = await apontar('Imagens');
+  const hi = await apontar('public');
   await page.mouse.click(hi.c.x, hi.c.y);
-  const recolheu = await esperar(() => window.__cerebro.state().focusId === null && !window.__cerebro.nodes.get('Imagens').expanded, null, 10000);
-  ok(recolheu && await page.evaluate(() => ![...window.__cerebro.nodes.values()].some((n) => n.parent === 'Imagens')), 'clicar na pasta em foco recolhe e volta ao nível de cima');
+  const recolheu = await esperar(() => window.__cerebro.state().focusId === null && !window.__cerebro.nodes.get('public').expanded, null, 10000);
+  ok(recolheu && await page.evaluate(() => ![...window.__cerebro.nodes.values()].some((n) => n.parent === 'public')), 'clicar no schema em foco recolhe e volta ao nível de cima');
   await page.evaluate(() => window.__cerebro.setSpin(true));
   await longe();
 
-  // ---------- busca (no painel) ----------
-  await page.locator('#busca').fill('MENSAGEM');
+  // ---------- busca (no painel): acha registro pelo conteúdo ----------
+  await page.locator('#busca').fill('Beatriz');
   await page.waitForSelector('#resultados.on button', { timeout: 8000 }).catch(() => {});
   await sleep(600);
-  await page.screenshot({ path: path.join(PRINTS, 'v2-08-busca.png') });
+  await page.screenshot({ path: path.join(PRINTS, 'v3-10-busca.png') });
   const alvo = await page.locator('#resultados button').first().getAttribute('data-path').catch(() => null);
   if (alvo) {
     const antes = (await st()).back.length;
@@ -327,9 +375,12 @@ try {
     const s = await st();
     ok(await page.evaluate((p) => window.__cerebro.nodes.has(p), alvo), `busca revela "${alvo}" no grafo`);
     ok(s.focusId !== null && s.back.length === antes + 1, `busca entra no histórico e foca "${s.focusId}"`);
-    ok(await page.evaluate((p) => { const n = window.__cerebro.nodes.get(p); return !!n.__dna && n.__dna.visible && n.__dna.element.classList.contains('forte'); }, alvo), 'o arquivo buscado fica destacado com o rótulo no DNA');
-    await page.screenshot({ path: path.join(PRINTS, 'v2-09-busca-revelou.png') });
+    ok(await page.evaluate((p) => { const n = window.__cerebro.nodes.get(p); return !!n.__dna && n.__dna.visible && n.__dna.element.classList.contains('forte'); }, alvo), 'a linha buscada fica destacada com o rótulo no DNA');
+    await page.screenshot({ path: path.join(PRINTS, 'v3-11-busca-revelou.png') });
   } else ok(false, 'busca retorna resultados');
+  await page.fill('#busca', 'trilhas');
+  ok(await esperar(() => [...document.querySelectorAll('#resultados button')].some((b) => /academy_trilhas/.test(b.textContent)), null, 8000), 'busca acha tabela pelo nome');
+  await page.fill('#busca', '');
 
   // voltar ao cérebro pelo botão
   await page.locator('#btn-home').click();
@@ -338,25 +389,23 @@ try {
   await esperar(() => window.__cerebro.state().dimK < 0.05, null, 15000);
   await sleep(1500);
   ok((await st()).focusId === null && (await st()).dimK < 0.05, 'botão "voltar ao cérebro" sai do foco e reacende tudo');
-  await page.screenshot({ path: path.join(PRINTS, 'v2-10-voltar-cerebro.png') });
+  await page.screenshot({ path: path.join(PRINTS, 'v3-12-voltar-cerebro.png') });
 
   // movimento reduzido
   const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const p2 = await ctx2.newPage();
   p2.on('pageerror', (e) => erros.push('[reduzido] ' + e));
   p2.on('console', (m) => { if (m.type() === 'error') erros.push('[reduzido] ' + m.text()); });
-  await p2.route('**/api/open', (route) => { aberturas.push('[reduzido]'); route.fulfill({ status: 200, body: '{}' }); });
   await p2.goto(B, { timeout: 90000 });
   await p2.waitForFunction(() => window.__cerebro && window.__cerebro.nodes.size > 5, null, { timeout: 20000 });
   ok(await p2.evaluate(() => document.body.classList.contains('reduzido')), 'respeita prefers-reduced-motion');
-  await p2.evaluate(() => window.__cerebro.navigate('Documentos'));
+  await p2.evaluate(() => window.__cerebro.navigate('public'));
   await p2.waitForFunction(() => window.__cerebro.state().helix.length > 0, null, { timeout: 15000 }).catch(() => {});
   const g1 = await p2.evaluate(() => window.__cerebro.state().spin);
   await sleep(2000);
   ok(await p2.evaluate((g) => window.__cerebro.state().spin === g && getComputedStyle(document.querySelector('.pulso')).animationName === 'none', g1), 'movimento reduzido: hélice parada e sem animações CSS');
   await ctx2.close();
 
-  ok(aberturas.length === 0, `nenhum /api/open fora do botão explícito (${aberturas.length})`);
   ok(erros.length === 0, `zero erros de console${erros.length ? ': ' + erros.join(' | ') : ''}`);
   await browser.close();
 } catch (e) {

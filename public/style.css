@@ -33,6 +33,10 @@ kbd {
 .hud-tag { font: 600 10px/1 ui-monospace, 'JetBrains Mono', monospace; letter-spacing: .16em; color: var(--ciano); opacity: .8; text-transform: uppercase; }
 
 #grafo { position: fixed; inset: 0; }
+/* fundo "mundo quântico" (public/quantico.html) atrás do grafo transparente; escurecido para os nós continuarem legíveis */
+#quantico { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
+body.quantico #quantico { opacity: .7; filter: brightness(.75) saturate(1.1); }
+#btn-quantico[aria-pressed="false"] { opacity: .6; }
 .css2d { position: absolute; top: 0; left: 0; pointer-events: none; }
 .vinheta {
   position: fixed; inset: 0; pointer-events: none;
@@ -163,6 +167,11 @@ h1 span, .intro h2 span {
 .lbl-d2 { opacity: .9; }
 .lbl-d3 { opacity: .75; font-size: 10px; }
 .lbl.aberta { border-color: var(--ciano); }
+/* planeta: o rótulo da seção vira o nome do país, na cor do território */
+.lbl.pais { font: 700 15px/1.2 'Exo 2', sans-serif; letter-spacing: .08em; text-transform: uppercase; border-color: var(--c); color: #fff;
+  background: color-mix(in srgb, var(--c) 22%, rgba(3, 8, 23, .75)); box-shadow: 0 0 16px color-mix(in srgb, var(--c) 45%, transparent); }
+.lbl.pais i { color: #fff; }
+#btn-reino, #btn-fechar { flex: 1; }
 .lbl-more { --c: #f5c76a; font-style: italic; }
 .lbl-brain {
   --c: #3fe3ff; flex-direction: column; gap: 0; padding: 5px 12px; text-align: center; background: rgba(3, 8, 23, .6);
@@ -258,6 +267,18 @@ h1 span, .intro h2 span {
 .grafico em { font-style: normal; text-align: right; color: var(--texto); }
 .grafico small { text-align: right; color: var(--texto-2); }
 .nota { margin: 5px 0 0; font: 9.5px ui-monospace, monospace; color: var(--texto-2); }
+/* detalhes de tabela no card (Supabase) */
+.hud-meta-extra { margin-top: 4px; }
+ul.colunas { list-style: none; margin: 8px 0 0; padding: 7px 0 0; display: grid; gap: 2px; border-top: 1px dashed rgba(63, 227, 255, .18); font: 11px/1.35 ui-monospace, 'JetBrains Mono', monospace; }
+ul.colunas li { display: flex; justify-content: space-between; gap: 10px; overflow: hidden; white-space: nowrap; }
+ul.colunas b { font-weight: 500; color: var(--texto); overflow: hidden; text-overflow: ellipsis; }
+ul.colunas span { color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; }
+ul.colunas li.pk b { color: var(--c); }
+ul.colunas li.oculta b { text-decoration: line-through; opacity: .6; }
+.rel { margin: 7px 0 0; font-size: 10.5px; line-height: 1.5; color: #ffd27a; }
+.rel.pol { color: var(--texto-2); }
+.visor-corpo:has(.v-img-linha) { grid-template-rows: auto 1fr; place-items: stretch; }
+.v-img-linha { max-height: 260px; justify-self: center; margin: 12px auto 0; border-radius: 8px; }
 ul.filhos { list-style: none; margin: 8px 0 0; padding: 7px 0 0; display: grid; gap: 2px; font-size: 11.5px; border-top: 1px dashed rgba(63, 227, 255, .18); }
 ul.filhos:empty { display: none; }
 ul.filhos li { display: flex; align-items: center; gap: 7px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

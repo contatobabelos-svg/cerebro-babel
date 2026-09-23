@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cérebro Babel</title>
-  <meta name="description" content="Explorador de arquivos em grafo neural, com identidade Babel.">
+  <meta name="description" content="Explorador de um projeto Supabase em grafo neural, com identidade Babel.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div id="grafo" aria-label="Grafo 3D dos arquivos"></div>
+  <iframe id="quantico" src="about:blank" title="Fundo: mundo quântico" aria-hidden="true" tabindex="-1"></iframe>
+  <div id="grafo" aria-label="Grafo 3D do banco"></div>
   <div class="vinheta" aria-hidden="true"></div>
 
   <header class="topo">
@@ -22,7 +23,7 @@
     </div>
 
     <nav id="trilha" class="trilha glass" aria-label="Onde você está">
-      <span class="hud-tag">LOCAL</span>
+      <span class="hud-tag">SUPABASE</span>
       <div id="trilha-segs" class="trilha-segs"></div>
       <span class="trilha-teclas" aria-hidden="true"><kbd>Q</kbd> voltar <kbd>E</kbd> refazer <kbd>Espaço</kbd> cérebro</span>
     </nav>
@@ -43,7 +44,7 @@
 
       <div class="busca">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
-        <input id="busca" type="search" placeholder="Buscar arquivo ou pasta…" autocomplete="off" spellcheck="false" aria-label="Buscar por nome">
+        <input id="busca" type="search" placeholder="Buscar tabela, função ou registro…" autocomplete="off" spellcheck="false" aria-label="Buscar no banco">
         <kbd>/</kbd>
         <div id="resultados" class="glass"></div>
       </div>
@@ -68,6 +69,12 @@
           <button id="nos-mais" title="Nós maiores" aria-label="Nós maiores">+</button>
         </div>
       </div>
+      <div class="linha">
+        <button id="btn-reino" class="largo" title="Abrir tudo num planeta, um país por seção (R)">Abrir Reino <kbd>R</kbd></button>
+        <button id="btn-fechar" class="largo" title="Fechar tudo e voltar ao início (X)">Fechar tudo <kbd>X</kbd></button>
+      </div>
+      <button id="btn-quantico" class="largo" aria-pressed="true" title="Ligar ou desligar o fundo animado (F)">Fundo quântico <kbd>F</kbd></button>
+      <button id="btn-fios" class="largo" title="Trocar o estilo dos fios entre as pastas (W)">Fios: <b>Neural</b> <kbd>W</kbd></button>
 
       <div class="secao">
         <span class="hud-tag">CORES</span>
@@ -77,10 +84,15 @@
         <span class="hud-tag">ATALHOS</span>
         <ul class="atalhos">
           <li><kbd>Espaço</kbd> voltar ao cérebro</li>
+          <li><kbd>Espaço</kbd> segurado: falar</li>
           <li><kbd>Q</kbd> voltar</li>
           <li><kbd>E</kbd> refazer</li>
           <li><kbd>/</kbd> buscar</li>
-          <li><kbd>clique</kbd> focar pasta</li>
+          <li><kbd>F</kbd> fundo quântico</li>
+          <li><kbd>W</kbd> trocar estilo dos fios</li>
+          <li><kbd>R</kbd> abrir Reino</li>
+          <li><kbd>X</kbd> fechar tudo</li>
+          <li><kbd>clique</kbd> focar schema/tabela</li>
           <li><kbd>2×</kbd> entrar / visualizar</li>
           <li><kbd>Esc</kbd> fechar</li>
         </ul>
@@ -102,7 +114,7 @@
         </div>
         <button id="visor-abrir" class="largo">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
-          Abrir no aplicativo padrão
+          Abrir no painel do Supabase
         </button>
         <button id="visor-fechar" class="icone" aria-label="Fechar (Esc)" title="Fechar (Esc)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

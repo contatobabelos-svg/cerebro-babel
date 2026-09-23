@@ -1,31 +1,35 @@
-// Cérebro Babel — explorador de arquivos em grafo 3D (estilo Obsidian) com identidade Babel.
-// v2: foco na pasta com dupla hélice de DNA em pé, histórico (Espaço/Q/E), painel único
-// recolhível, card HUD holográfico e visor grande dentro do app.
+// Cérebro Babel — explorador de um projeto Supabase em grafo 3D (estilo Obsidian) com identidade Babel.
+// O centro é o projeto; as linhas neurais são os schemas (mais Edge Functions e Buckets); dentro de cada
+// schema ficam tabelas, views e funções; dentro de cada tabela, as linhas. Foco com dupla hélice de DNA,
+// histórico (Espaço/Q/E), painel recolhível, card HUD e visor grande. Só leitura.
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { forceRadial } from 'd3-force-3d';
+import { iniciarVoz } from './voz.js';
+import { CORES_PAISES, raioPlaneta, distribuirPaises, pontoNoPais } from './planeta.js';
 
 // ---------------- identidade ----------------
 const COLORS = {
-  pasta: '#3b82ff', imagem: '#3fe3ff', video: '#e04bff', audio: '#34e6a6',
-  documento: '#ffb547', codigo: '#8b5cff', compactado: '#f5c76a', outro: '#8d9bc4', mais: '#f5c76a',
+  schema: '#3b82ff', tabela: '#3fe3ff', view: '#8b5cff', funcao: '#ffb547', linha: '#34e6a6',
+  edge: '#e04bff', bucket: '#f5c76a', objeto: '#ff7ab8', outro: '#8d9bc4', mais: '#f5c76a', fk: '#ffd27a',
 };
 const LABELS = {
-  pasta: 'Pasta', imagem: 'Imagem', video: 'Vídeo', audio: 'Áudio', documento: 'Documento',
-  codigo: 'Código', compactado: 'Compactado', outro: 'Outro',
+  schema: 'Schema', tabela: 'Tabela', view: 'View', funcao: 'Função', linha: 'Linha',
+  edge: 'Edge Function', bucket: 'Bucket', objeto: 'Arquivo do storage',
 };
-const SIGLA = { pasta: 'DIR', imagem: 'IMG', video: 'VID', audio: 'AUD', documento: 'DOC', codigo: 'COD', compactado: 'ZIP', outro: 'BIN', mais: 'MAIS' };
-const XDG = new Set(['Documentos', 'Imagens', 'Vídeos', 'Músicas', 'Downloads', 'Área de trabalho', 'apps', 'projetos', 'Modelos', 'Público']);
-const TEXT_EXT = new Set('txt md markdown csv tsv log js mjs cjs ts tsx jsx py go rs c h cpp hpp cc java kt rb php html htm css scss sass less json jsonc yml yaml toml sh bash zsh fish sql vue svelte lua swift xml ini conf cfg env gradle dart r pl desktop service'.split(' '));
+const SIGLA = { schema: 'SCH', tabela: 'TAB', view: 'VIEW', funcao: 'FN', linha: 'ROW', edge: 'EDGE', bucket: 'BKT', objeto: 'OBJ', outro: '???', mais: 'MAIS' };
+const UNIDADE = { schema: ['item', 'itens'], tabela: ['linha', 'linhas'], view: ['linha', 'linhas'], edge: ['função', 'funções'], bucket: ['item', 'itens'] };
+const DESTAQUE = new Set(['public', 'auth', 'storage', 'Edge Functions', 'Buckets']);
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const enc = encodeURIComponent;
-const ext = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
+const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+const human = (p) => (p ? p.split('/').map(dec).join('/') : ''); // caminho legível (segmentos vêm codificados)
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2);
 const nf = (v) => Number(v || 0).toLocaleString('pt-BR');
@@ -74,6 +78,17 @@ let spotlight = null;           // arquivo escolhido na hélice (rótulo sempre 
 let spinOn = !reduced;
 const hist = { back: [], fwd: [] };
 let navToken = 0;
+let planeta = null;              // "Abrir Reino": { raio, ids } enquanto o mundo está montado
+
+// fios: como os fios que ligam as pastas são desenhados (curvatura); botão "Fios" / tecla W
+const FIOS = ['neural', 'reto', 'arco'];
+const FIO_ROTULO = { neural: 'Neural', reto: 'Retos', arco: 'Em arco' };
+const FIO_CURVA = {
+  neural: (l) => (l.type === 'seq' ? 0.28 : l.type === 'fk' ? 0.45 : 0),
+  reto: () => 0,
+  arco: (l) => (l.type === 'neural' ? 0.16 : l.type === 'seq' ? 0.42 : l.type === 'fk' ? 0.62 : 0.3),
+};
+let fioEstilo = FIOS.includes(store.get('cerebro.fios')) ? store.get('cerebro.fios') : 'neural';
 
 // ---------------- materiais e geometrias compartilhados ----------------
 const GEO = {
@@ -101,7 +116,7 @@ function nodeMat(mk, dim) {
 }
 function lineMat(type, kind, dim) {
   return mat(`L:${type}:${type === 'neural' ? '' : kind}${dim ? '~' : ''}`, () => {
-    const opacity = type === 'neural' ? 0.35 : type === 'seq' ? 0.5 : 0.22;
+    const opacity = type === 'neural' ? 0.35 : type === 'seq' || type === 'fk' ? 0.5 : 0.22;
     const m = type === 'neural'
       ? new THREE.MeshBasicMaterial({ color: '#2aa9e0', transparent: true, opacity })
       : new THREE.LineBasicMaterial({ color: COLORS[kind] || COLORS.outro, transparent: true, opacity });
@@ -228,7 +243,7 @@ function makeBrain() {
 
   const el = document.createElement('div');
   el.className = 'lbl lbl-brain';
-  el.innerHTML = `<b>${esc(info.hostname)}</b><span>o computador</span>`;
+  el.innerHTML = `<b>${esc(info.hostname)}</b><span>o banco</span>`;
   const lbl = new CSS2DObject(el);
   lbl.position.set(0, 17, 0);
   g.add(lbl);
@@ -243,14 +258,14 @@ function makeBrain() {
 function baseScale(n) {
   if (n.type === 'file') return Math.min(2.6, 1.05 + Math.log10((n.size || 0) + 10) * 0.2);
   if (n.type === 'more') return 1;
-  if (n.depth === 1) return XDG.has(n.name) ? 2.9 : 2.2;
+  if (n.depth === 1) return DESTAQUE.has(n.name) ? 2.9 : 2.2;
   return Math.max(1.4, 2 - n.depth * 0.12);
 }
 
 function makeLabel(n) {
   const el = document.createElement('div');
-  el.className = `lbl lbl-d${Math.min(n.depth, 3)}${n.type === 'more' ? ' lbl-more' : ''}${XDG.has(n.name) && n.depth === 1 ? ' lbl-xdg' : ''}`;
-  el.style.setProperty('--c', COLORS[n.kind] || COLORS.pasta);
+  el.className = `lbl lbl-d${Math.min(n.depth, 3)}${n.type === 'more' ? ' lbl-more' : ''}${DESTAQUE.has(n.name) && n.depth === 1 ? ' lbl-xdg' : ''}`;
+  el.style.setProperty('--c', COLORS[n.kind] || COLORS.schema);
   const count = n.type === 'more' ? '' : n.children != null ? `<i>${n.children}</i>` : '';
   el.innerHTML = `${esc(n.name)}${count}`;
   const o = new CSS2DObject(el);
@@ -299,10 +314,11 @@ css2d.domElement.classList.add('css2d');
 const idOf = (end) => (end && typeof end === 'object' ? end.id : end);
 const isDim = (n) => focusId !== null && !focusSet.has(n.id);
 const linkLit = (l) => focusId === null || (litSet.has(idOf(l.source)) && litSet.has(idOf(l.target)));
-const linkHidden = (l) => focusId !== null && (helixIds.has(idOf(l.source)) || helixIds.has(idOf(l.target)));
+const linkHidden = (l) => (planeta && (l.type === 'tree' || l.type === 'seq')) // no planeta, só fios neurais e chaves estrangeiras
+  || (focusId !== null && (helixIds.has(idOf(l.source)) || helixIds.has(idOf(l.target))));
 
 const graph = new ForceGraph3D(container, { extraRenderers: [css2d], controlType: 'orbit' })
-  .backgroundColor('#030817')
+  .backgroundColor('rgba(3, 8, 23, 0)') // transparente: atrás fica o fundo quântico (ou a cor do body)
   .showNavInfo(false)
   .nodeId('id')
   .nodeLabel(() => '')
@@ -310,11 +326,11 @@ const graph = new ForceGraph3D(container, { extraRenderers: [css2d], controlType
   .enableNodeDrag(false)
   .linkWidth((l) => (l.type === 'neural' ? 0.55 : 0))
   .linkMaterial((l) => lineMat(l.type, l.kind, !linkLit(l)))
-  .linkCurvature((l) => (l.type === 'seq' ? 0.28 : 0))
-  .linkDirectionalParticles((l) => (reduced ? 0 : l.type === 'neural' ? 2 : l.type === 'seq' ? 2 : 1))
+  .linkCurvature((l) => FIO_CURVA[fioEstilo](l))
+  .linkDirectionalParticles((l) => (reduced ? 0 : l.type === 'neural' ? 2 : l.type === 'seq' || l.type === 'fk' ? 2 : 1))
   // partículas dos fios fora do foco quase param
-  .linkDirectionalParticleSpeed((l) => (l.type === 'neural' ? 0.0035 : l.type === 'seq' ? 0.009 : 0.0022) * (linkLit(l) ? 1 : 1 - 0.94 * dimK))
-  .linkDirectionalParticleWidth((l) => (l.type === 'neural' ? 1.5 : l.type === 'seq' ? 1.25 : 0.8))
+  .linkDirectionalParticleSpeed((l) => (l.type === 'neural' ? 0.0035 : l.type === 'seq' ? 0.009 : l.type === 'fk' ? 0.006 : 0.0022) * (linkLit(l) ? 1 : 1 - 0.94 * dimK))
+  .linkDirectionalParticleWidth((l) => (l.type === 'neural' ? 1.5 : l.type === 'seq' || l.type === 'fk' ? 1.25 : 0.8))
   .linkDirectionalParticleColor((l) => (l.type === 'neural' ? '#7eeaff' : COLORS[l.kind]))
   .linkDirectionalParticleResolution(6)
   .cooldownTime(reduced ? 3500 : 7000)
@@ -326,8 +342,8 @@ css2d.domElement.style.pointerEvents = 'none';
 
 graph.d3Force('charge').strength((n) => (n.type === 'brain' ? -420 : n.type === 'file' ? -22 : -90)).distanceMax(260);
 graph.d3Force('link')
-  .distance((l) => (l.type === 'neural' ? 190 : l.type === 'seq' ? 9 : 26 + Math.sqrt(l.fan || 1) * 3))
-  .strength((l) => (l.type === 'seq' ? 0.5 : l.type === 'tree' ? 0.3 : 0.5));
+  .distance((l) => (l.type === 'neural' ? 190 : l.type === 'seq' ? 9 : l.type === 'fk' ? 40 : 26 + Math.sqrt(l.fan || 1) * 3))
+  .strength((l) => (l.type === 'seq' ? 0.5 : l.type === 'tree' ? 0.3 : l.type === 'fk' ? 0.04 : 0.5));
 graph.d3Force('radial', forceRadial((n) => (n.depth ? 190 + (n.depth - 1) * 80 : 0))
   .strength((n) => (n.type === 'brain' ? 0 : n.depth === 1 ? 0.3 : 0.035)));
 graph.d3Force('center', null);
@@ -389,6 +405,7 @@ function addItems(parent, data) {
     }
   }
   removeNode(parent.id + '#mais');
+  addFkLinks();
   const next = data.offset + data.limit;
   if (next < data.total) {
     const m = {
@@ -400,12 +417,21 @@ function addItems(parent, data) {
   }
 }
 
+// chaves estrangeiras: fio dourado entre duas tabelas quando as duas estão no grafo
+function addFkLinks() {
+  for (const f of info.fks || []) {
+    if (!nodes.has(f.src) || !nodes.has(f.dst) || f.src === f.dst) continue;
+    if (links.some((l) => l.type === 'fk' && idOf(l.source) === f.src && idOf(l.target) === f.dst)) continue;
+    addLink(f.src, f.dst, 'fk', 'fk');
+  }
+}
+
 function ensureSoltos() {
   let s = nodes.get('#soltos');
   if (!s) {
-    s = { id: '#soltos', type: 'group', kind: 'pasta', name: 'Arquivos soltos', path: '', parent: '#brain', depth: 1, children: 0, pending: [], ...spawnNear() };
+    s = { id: '#soltos', type: 'group', kind: 'schema', name: 'Arquivos soltos', path: '', parent: '#brain', depth: 1, children: 0, pending: [], ...spawnNear() };
     nodes.set(s.id, s);
-    addLink('#brain', s.id, 'neural', 'pasta');
+    addLink('#brain', s.id, 'neural', 'schema');
   }
   return s;
 }
@@ -473,11 +499,19 @@ async function loadMore(m) {
   if (parent) await loadPage(parent, m.offset);
 }
 
-async function openOnDesktop(n) {
-  try {
-    await api('/api/open', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cerebro': '1' }, body: JSON.stringify({ path: n.path }) });
-    toast(`Abrindo ${n.name} no aplicativo padrão…`);
-  } catch (e) { toast(`Não abriu: ${e.message}`); }
+// link do item no painel do Supabase (abre no navegador; o app nunca escreve no banco)
+function dashboardUrl(n) {
+  const D = info.dashboard || 'https://supabase.com/dashboard';
+  const s = (n.path || '').split('/').map(dec);
+  if (s[0] === '@edge') return s[1] ? `${D}/functions/${enc(s[1])}/details` : `${D}/functions`;
+  if (s[0] === '@buckets') return s[1] ? `${D}/storage/buckets/${enc(s[1])}` : `${D}/storage/buckets`;
+  if (!s[0]) return D;
+  if (n.kind === 'funcao') return `${D}/database/functions?schema=${enc(s[0])}`;
+  if (s.length >= 2) return `${D}/editor?schema=${enc(s[0])}`;
+  return `${D}/database/tables?schema=${enc(s[0])}`;
+}
+function openDashboard(n) {
+  window.open(dashboardUrl(n), '_blank', 'noopener');
 }
 
 // ---------------- câmera ----------------
@@ -737,6 +771,7 @@ async function ensurePath(p) {
 async function setFocus(id) {
   const token = ++navToken;
   spotlight = null;
+  if (planeta && id) sairPlaneta(); // entrar numa pasta desmonta o planeta (os nós ficam onde estão e a física assume)
   if (id && !nodes.has(id) && id !== '#soltos') await ensurePath(id);
   if (token !== navToken) return;
   if (id && !nodes.has(id)) { toast('Essa pasta não está mais no grafo.'); id = null; }
@@ -805,7 +840,9 @@ function goForward() {
   hist.back.push(focusId);
   return setFocus(hist.fwd.pop());
 }
-function goBrain() { return navigate(null); }
+// se o Reino estiver montado, "voltar ao cérebro" precisa fechar tudo de verdade (senão as
+// pastas carregadas para o planeta ficam presas na tela, sem física nem posição fixa)
+function goBrain() { return planeta ? fecharTudo() : navigate(null); }
 
 // trilha no topo (onde estou) + estado dos botões voltar/avançar
 function updateTrail() {
@@ -827,9 +864,15 @@ $('#trilha-segs').addEventListener('click', (e) => {
 let labelsDirty = true;
 function dnaText(n) {
   if (n.type === 'more') return 'MAIS ITENS · clique para carregar';
-  if (n.type === 'dir') return `DIR · ${nf(n.children)} ${n.children === 1 ? 'item' : 'itens'}${n.mtime ? ' · ' + fmtDate(n.mtime) : ''}`;
-  const e = ext(n.name);
-  return `${SIGLA[n.kind] || 'ARQ'}${e ? ' .' + e.toUpperCase() : ''} · ${fmtSize(n.size)}${n.mtime ? ' · ' + fmtDate(n.mtime) : ''}`;
+  if (n.type === 'dir') {
+    const u = UNIDADE[n.kind] || UNIDADE.schema;
+    return `${SIGLA[n.kind] || 'DIR'} · ${n.children == null ? '?' : nf(n.children)} ${n.children === 1 ? u[0] : u[1]}${n.size ? ' · ' + fmtSize(n.size) : ''}`;
+  }
+  const parts = [SIGLA[n.kind] || '???'];
+  if (n.size) parts.push(fmtSize(n.size));
+  if (n.mtime) parts.push(fmtDate(n.mtime));
+  if (parts.length === 1) parts.push(LABELS[n.kind] || 'item');
+  return parts.join(' · ');
 }
 function ensureDnaLabel(n) {
   if (n.__dna || !n.__obj) return;
@@ -973,14 +1016,15 @@ function hidePopup() {
 function hint(n) {
   if (n.type === 'brain') return '<kbd>clique</kbd> voltar ao cérebro';
   if (n.type === 'dir' || n.type === 'group') return focusId === n.id ? '<kbd>clique</kbd> recolher e voltar · <kbd>Q</kbd> voltar' : '<kbd>clique</kbd> focar · <kbd>2×</kbd> entrar';
+  if (n.kind === 'linha') return '<kbd>clique</kbd> aproximar · <kbd>2×</kbd> ver a linha inteira';
   if (n.type === 'more') return '<kbd>clique</kbd> carregar o resto';
   return '<kbd>clique</kbd> aproximar · <kbd>2×</kbd> visualizar';
 }
 
 function crumbs(p) {
-  const segs = p ? p.split('/') : [];
+  const segs = p ? p.split('/').map(dec) : [];
   const shown = segs.length > 4 ? ['…', ...segs.slice(-4)] : segs;
-  return `<span class="raiz">~</span>${shown.map((s, i) => `<i>/</i>${i === shown.length - 1 ? `<b>${esc(s)}</b>` : esc(s)}`).join('')}`;
+  return `<span class="raiz">${esc((info.hostname || 'db').toLowerCase())}</span>${shown.map((s, i) => `<i>/</i>${i === shown.length - 1 ? `<b>${esc(s)}</b>` : esc(s)}`).join('')}`;
 }
 function meter(label, v, text) {
   return `<div class="medidor"><span>${label}</span><div class="barra"><i style="--v:${clamp(v, 0.02, 1).toFixed(3)}"></i></div><em>${esc(text)}</em></div>`;
@@ -1003,38 +1047,35 @@ function showPopup(n) {
   popNode = n;
   const token = ++popToken;
   const color = n.type === 'brain' ? '#3fe3ff' : COLORS[n.kind] || COLORS.outro;
-  const kindLabel = n.type === 'brain' ? 'Cérebro' : n.type === 'more' ? 'Mais itens' : n.type === 'group' ? 'Grupo' : LABELS[n.kind] || 'Arquivo';
-  const e = ext(n.name || '');
+  const kindLabel = n.type === 'brain' ? 'Projeto Supabase' : n.type === 'more' ? 'Mais itens' : n.type === 'group' ? 'Grupo' : LABELS[n.kind] || 'Item';
   const q = n.path ? enc(n.path) : '';
   const meta = [];
   let meters = '';
   let body = '';
 
   if (n.type === 'file') {
-    meta.push(['TIPO', `${SIGLA[n.kind] || 'ARQ'}${e ? ' · .' + e : ''}`], ['TAM', fmtSize(n.size)], ['MOD', fmtDate(n.mtime) || '—'], ['NÍVEL', String(n.depth)]);
-    const irmaos = [...nodes.values()].filter((x) => x.parent === n.parent && x.type === 'file');
-    const maior = Math.max(1, ...irmaos.map((x) => x.size || 0));
-    meters = meter('TAMANHO', (n.size || 0) / maior, `${Math.round(((n.size || 0) / maior) * 100)}% do maior`)
-      + meter('ESCALA', Math.log10((n.size || 0) + 1) / 10, fmtSize(n.size));
-    if (n.kind === 'imagem') body = `<div class="media"><img alt="" src="/api/thumb?path=${q}" onerror="this.parentNode.innerHTML='<p class=vazio>sem miniatura</p>'"></div>`;
-    else if (n.kind === 'video') body = `<div class="media"><video muted autoplay loop playsinline preload="auto" poster="/api/thumb?path=${q}" src="/api/media?path=${q}"></video></div>`;
-    else if (n.kind === 'audio') body = `<div class="media audio"><img alt="" src="/api/thumb?path=${q}" onerror="this.remove()"><div class="disco"></div><audio controls preload="none" src="/api/media?path=${q}"></audio></div>`;
-    else if (e === 'pdf') body = `<div class="media pdf"><img alt="" src="/api/thumb?path=${q}" onerror="this.parentNode.innerHTML='<p class=vazio>sem prévia do PDF</p>'"></div>`;
-    else if (TEXT_EXT.has(e) || (n.kind === 'outro' && n.size < 262144)) body = '<pre class="txt carregando-txt">lendo…</pre>';
-    else body = '<p class="vazio">sem prévia para este tipo</p>';
+    meta.push(['TIPO', SIGLA[n.kind] || '???'], ['TAM', n.size ? fmtSize(n.size) : '—'], ['DATA', fmtDate(n.mtime) || '—'], ['NÍVEL', String(n.depth)]);
+    if (n.size) {
+      const irmaos = [...nodes.values()].filter((x) => x.parent === n.parent && x.type === 'file');
+      const maior = Math.max(1, ...irmaos.map((x) => x.size || 0));
+      meters = meter('TAMANHO', (n.size || 0) / maior, `${Math.round(((n.size || 0) / maior) * 100)}% do maior`);
+    }
+    if (n.img) body = `<div class="media"><img alt="" referrerpolicy="no-referrer" src="${esc(n.img)}" onerror="this.parentNode.remove()"></div>`;
+    body += '<pre class="txt carregando-txt">lendo…</pre>';
   } else if (n.type === 'dir' || n.type === 'group') {
-    meta.push(['ITENS', nf(n.children)], ['MOD', fmtDate(n.mtime) || '—'], ['NÍVEL', String(n.depth)], ['ESTADO', focusId === n.id ? 'EM FOCO' : n.expanded ? 'ABERTA' : 'FECHADA']);
-    meters = meter('ITENS', Math.log10((n.children || 0) + 1) / 3, `${nf(n.children)}`) + '<div class="medidor-bytes"></div>';
-    body = '<div class="hud-grafico"><p class="vazio">analisando…</p></div><ul class="filhos"></ul>';
+    const u = UNIDADE[n.kind] || UNIDADE.schema;
+    meta.push([u[1].toUpperCase(), n.children == null ? '?' : nf(n.children)], ['NÍVEL', String(n.depth)], ['ESTADO', focusId === n.id ? 'EM FOCO' : n.expanded ? 'ABERTA' : 'FECHADA']);
+    meters = meter(u[1].toUpperCase(), Math.log10((n.children || 0) + 1) / 3, `${n.children == null ? '?' : nf(n.children)}`) + '<div class="medidor-bytes"></div>';
+    body = '<div class="hud-grafico"><p class="vazio">analisando…</p></div><div class="hud-extra"></div><ul class="filhos"></ul>';
   } else if (n.type === 'brain') {
     const top = [...nodes.values()].filter((x) => x.depth === 1).length;
-    meta.push(['HOST', info.hostname], ['USUÁRIO', info.user || '—'], ['FOCO', focusId ? (nodes.get(focusId)?.name || '—') : 'CÉREBRO']);
+    meta.push(['PROJETO', info.hostname], ['REGIÃO', info.region || '—'], ['REF', info.ref || '—'], ['FOCO', focusId ? (nodes.get(focusId)?.name || '—') : 'CÉREBRO']);
     body = `<div class="brain-info"><div><b>${top}</b><span>linhas neurais</span></div><div><b>${nf(nodes.size)}</b><span>neurônios</span></div><div><b>${nf(links.length)}</b><span>fios</span></div></div>`;
   } else if (n.type === 'more') {
     meta.push(['RESTAM', n.name.replace(/^\+| mais$/g, '')]);
   }
 
-  const where = n.type === 'brain' ? (info.home || '~') : n.path;
+  const where = n.type === 'brain' ? `supabase · ${info.ref || ''}` : n.path;
   pop.style.setProperty('--c', color);
   pop.innerHTML = `
     <i class="canto tl"></i><i class="canto tr"></i><i class="canto bl"></i><i class="canto br"></i>
@@ -1042,7 +1083,7 @@ function showPopup(n) {
       <div class="scan" aria-hidden="true"></div>
       <div class="pop-head"><span class="dot"></span><span class="tipo">${esc(kindLabel)}</span><span class="hud-id">ID ${hexId(n.id || 'x')}</span></div>
       <h3>${esc(n.type === 'brain' ? info.hostname : n.name)}</h3>
-      ${n.type === 'brain' ? `<div class="onde mono">${esc(where)}</div>` : n.path ? `<div class="onde mono" title="~/${esc(where)}">${crumbs(where)}</div>` : ''}
+      ${n.type === 'brain' ? `<div class="onde mono">${esc(where)}</div>` : n.path ? `<div class="onde mono" title="${esc(human(where))}">${crumbs(where)}</div>` : ''}
       ${meta.length ? `<dl class="hud-meta">${meta.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
       ${meters}
       ${body}
@@ -1061,8 +1102,7 @@ function showPopup(n) {
     const fill = (d) => {
       if (token !== popToken) return;
       pre.classList.remove('carregando-txt');
-      if (d.binary) pre.outerHTML = '<p class="vazio">arquivo binário, sem prévia</p>';
-      else pre.textContent = (d.text || '(vazio)') + (d.truncated ? '\n…' : '');
+      pre.textContent = (d.text || '(vazio)') + (d.truncated ? '\n…' : '');
       placePopup();
     };
     if (textCache.has(n.path)) fill(textCache.get(n.path));
@@ -1076,6 +1116,9 @@ function showPopup(n) {
       graf.innerHTML = kindChart(s.kinds, s.total, s.amostra);
       const mb = pop.querySelector('.medidor-bytes');
       if (mb && s.bytes != null) mb.outerHTML = meter('VOLUME', Math.log10(s.bytes + 1) / 11, fmtSize(s.bytes));
+      const ex = pop.querySelector('.hud-extra');
+      if (ex) ex.innerHTML = extraHtml(s);
+      if (s.cols) pop.querySelector('ul.filhos')?.remove(); // numa tabela, as colunas dizem mais que as 5 primeiras linhas
       placePopup();
     };
     const fillList = (items, total) => {
@@ -1093,10 +1136,24 @@ function showPopup(n) {
     } else {
       if (statsCache.has(n.path)) fillStats(statsCache.get(n.path));
       else api(`/api/stats?path=${q}`).then((s) => { statsCache.set(n.path, s); fillStats(s); }).catch(() => fillStats({ kinds: {}, total: 0 }));
-      if (listCache.has(n.path)) fillList(...listCache.get(n.path));
+      if (['tabela', 'view'].includes(n.kind)) { /* colunas no lugar dos filhos */ } else if (listCache.has(n.path)) fillList(...listCache.get(n.path));
       else api(`/api/list?path=${q}&limit=5`).then((d) => { listCache.set(n.path, [d.items, d.total]); fillList(d.items, d.total); }).catch(() => fillList([], 0));
     }
   }
+}
+
+// detalhes de tabela/bucket no card: RLS, políticas, colunas, chaves estrangeiras
+function extraHtml(s) {
+  let h = '';
+  if (s.info?.length) h += `<dl class="hud-meta hud-meta-extra">${s.info.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+  if (s.cols?.length) {
+    const max = 12;
+    h += `<ul class="colunas">${s.cols.slice(0, max).map((c) => `<li class="${c.pk ? 'pk' : ''}${c.oculta ? ' oculta' : ''}"><b>${esc(c.name)}</b><span>${esc(c.type)}${c.pk ? ' · PK' : ''}${c.oculta ? ' · oculto' : ''}</span></li>`).join('')}`
+      + `${s.cols.length > max ? `<li class="vazio">+ ${s.cols.length - max} colunas</li>` : ''}</ul>`;
+  }
+  if (s.fks?.length) h += `<p class="rel mono">${s.fks.map(esc).join('<br>')}</p>`;
+  if (s.pols?.length) h += `<p class="rel mono pol">${s.pols.slice(0, 6).map(esc).join('<br>')}</p>`;
+  return h;
 }
 
 // linha-guia: do nó até o card, com retícula no nó
@@ -1128,56 +1185,25 @@ graph.onBackgroundClick(() => { hidePopup(); spotlight = null; });
 // VISOR GRANDE (duplo clique num arquivo)
 // =====================================================================
 const visor = $('#visor');
-let visorNode = null, pdfState = null;
+let visorNode = null;
 function openVisor(n) {
   visorNode = n;
   const q = enc(n.path);
-  const e = ext(n.name);
   const color = COLORS[n.kind] || COLORS.outro;
   visor.style.setProperty('--c', color);
-  $('#visor-tipo').textContent = `${LABELS[n.kind] || 'Arquivo'}${e ? ' · .' + e : ''}`;
+  $('#visor-tipo').textContent = LABELS[n.kind] || 'Item';
   $('#visor-titulo').textContent = n.name;
-  $('#visor-meta').innerHTML = [['CAMINHO', '~/' + n.path], ['TAM', fmtSize(n.size)], ['MOD', fmtDate(n.mtime)]]
+  $('#visor-meta').innerHTML = [['CAMINHO', human(n.path)], ['TAM', n.size ? fmtSize(n.size) : ''], ['DATA', fmtDate(n.mtime)]].filter(([, v]) => v)
     .map(([k, v]) => `<span><b>${k}</b> ${esc(v)}</span>`).join('');
   const corpo = $('#visor-corpo');
-  pdfState = null;
-  if (n.kind === 'imagem') {
-    corpo.innerHTML = `<img class="v-img" alt="${esc(n.name)}" src="/api/media?path=${q}">`;
-    corpo.querySelector('img').addEventListener('error', function onErr() { // formatos que o navegador não lê (HEIC, TIFF…): usa a miniatura
-      this.removeEventListener('error', onErr);
-      this.src = `/api/thumb?path=${q}`;
-    });
-  } else if (n.kind === 'video') {
-    corpo.innerHTML = `<video class="v-video" controls autoplay playsinline src="/api/media?path=${q}"></video>`;
-  } else if (n.kind === 'audio') {
-    corpo.innerHTML = `<div class="v-audio"><img alt="" src="/api/thumb?path=${q}" onerror="this.remove()"><div class="disco grande"></div><audio controls autoplay src="/api/media?path=${q}"></audio></div>`;
-  } else if (e === 'pdf') {
-    pdfState = { page: 1, pages: 1 };
-    corpo.innerHTML = `<div class="v-pdf"><div class="pdf-nav"><button id="pdf-ant" aria-label="Página anterior">‹</button><span id="pdf-pag" class="mono">1 / …</span><button id="pdf-prox" aria-label="Próxima página">›</button></div><img id="pdf-img" alt="Página do PDF" src="/api/pdfpage?path=${q}&page=1"></div>`;
-    api(`/api/pdfinfo?path=${q}`).then((d) => { if (visorNode === n && pdfState) { pdfState.pages = d.pages; showPdfPage(); } }).catch(() => {});
-    $('#pdf-ant').addEventListener('click', () => { if (pdfState.page > 1) { pdfState.page--; showPdfPage(); } });
-    $('#pdf-prox').addEventListener('click', () => { if (pdfState.page < pdfState.pages) { pdfState.page++; showPdfPage(); } });
-  } else if (TEXT_EXT.has(e) || (n.kind === 'outro' && n.size < 262144)) {
-    corpo.innerHTML = '<pre class="v-txt">lendo…</pre>';
-    api(`/api/text?path=${q}&full=1`).then((d) => {
-      if (visorNode !== n) return;
-      const pre = corpo.querySelector('pre');
-      if (d.binary) pre.outerHTML = '<p class="vazio">arquivo binário, sem visualização</p>';
-      else pre.textContent = (d.text || '(vazio)') + (d.truncated ? '\n\n… (arquivo grande: mostrando os primeiros 512 KB)' : '');
-    }).catch(() => { corpo.querySelector('pre').textContent = '(não foi possível ler)'; });
-  } else {
-    corpo.innerHTML = '<div class="v-nada"><p>Sem visualização para este tipo de arquivo.</p><p class="vazio">Use o botão acima para abrir no aplicativo padrão.</p></div>';
-  }
+  corpo.innerHTML = (n.img ? `<img class="v-img v-img-linha" alt="${esc(n.name)}" referrerpolicy="no-referrer" src="${esc(n.img)}" onerror="this.remove()">` : '') + '<pre class="v-txt">lendo…</pre>';
+  api(`/api/text?path=${q}&full=1`).then((d) => {
+    if (visorNode !== n) return;
+    corpo.querySelector('pre').textContent = (d.text || '(vazio)') + (d.truncated ? '\n\n… (grande demais: mostrando os primeiros 512 KB)' : '');
+  }).catch((err) => { const pre = corpo.querySelector('pre'); if (pre) pre.textContent = `(não foi possível ler: ${err.message})`; });
   visor.hidden = false;
   requestAnimationFrame(() => visor.classList.add('on'));
   $('#visor-fechar').focus();
-}
-function showPdfPage() {
-  if (!pdfState || !visorNode) return;
-  $('#pdf-pag').textContent = `${pdfState.page} / ${pdfState.pages}`;
-  $('#pdf-img').src = `/api/pdfpage?path=${enc(visorNode.path)}&page=${pdfState.page}`;
-  $('#pdf-ant').disabled = pdfState.page <= 1;
-  $('#pdf-prox').disabled = pdfState.page >= pdfState.pages;
 }
 function closeVisor() {
   if (visor.hidden) return;
@@ -1189,7 +1215,7 @@ function closeVisor() {
 }
 $('#visor-fechar').addEventListener('click', closeVisor);
 $('#visor-fundo').addEventListener('click', closeVisor);
-$('#visor-abrir').addEventListener('click', () => { if (visorNode) openOnDesktop(visorNode); });
+$('#visor-abrir').addEventListener('click', () => { if (visorNode) openDashboard(visorNode); });
 
 // =====================================================================
 // PAINEL DE CONTROLE (inferior esquerdo, recolhível)
@@ -1240,7 +1266,7 @@ async function doSearch(q) {
   function render(list, pending) {
     if (token !== searchToken) return;
     results.innerHTML = list.length
-      ? list.map((r) => `<button data-path="${esc(r.path)}" style="--c:${COLORS[r.kind] || COLORS.outro}"><span class="dot"></span><b>${esc(r.name)}</b><small>~/${esc(r.path)}</small></button>`).join('')
+      ? list.map((r) => `<button data-path="${esc(r.path)}" style="--c:${COLORS[r.kind] || COLORS.outro}"><span class="dot"></span><b>${esc(r.name)}</b><small>${esc(human(r.path))}</small></button>`).join('')
       : `<p class="vazio">${pending ? 'procurando…' : 'nada encontrado'}</p>`;
     results.classList.add('on');
   }
@@ -1285,8 +1311,105 @@ function flash(n) {
   requestAnimationFrame(step);
 }
 
+// =====================================================================
+// FECHAR TUDO / ABRIR REINO (planeta)
+// =====================================================================
+// "fechar tudo": recolhe todas as pastas, desmonta o planeta, limpa o histórico e volta à visão inicial
+async function fecharTudo() {
+  sairPlaneta();
+  hidePopup();
+  if (!visor.hidden) closeVisor();
+  for (const n of [...nodes.values()]) if (n.depth === 1 && n.expanded && nodes.has(n.id)) collapse(n);
+  hist.back.length = 0;
+  hist.fwd.length = 0;
+  if (sizeFactor !== 1) resize(1 / sizeFactor);
+  await setFocus(null);
+  graph.d3ReheatSimulation();
+}
+
+// "abrir reino": carrega tudo — schemas, tabelas, views, funções, Edge Functions, buckets, as linhas de cada
+// tabela e os arquivos de cada bucket — e monta o mundo, um país por seção do cérebro
+const SUB_PAIS = new Set(['bucket', 'tabela', 'view']); // tipos de pasta que ainda escondem gente dentro
+let abrindoReino = null;
+function abrirReino() {
+  if (abrindoReino) return abrindoReino;
+  abrindoReino = (async () => {
+    await fecharTudo();
+    document.body.classList.add('carregando');
+    toast('Abrindo o Reino…');
+    const secoes = [...nodes.values()].filter((n) => n.depth === 1 && (n.type === 'dir' || n.type === 'group'));
+    const carregarTudo = async (n) => {
+      await loadPage(n);
+      for (let i = 0; i < 8 && nodes.has(n.id + '#mais'); i++) await loadMore(nodes.get(n.id + '#mais'));
+      const sub = [...nodes.values()].filter((k) => k.parent === n.id && k.type === 'dir' && SUB_PAIS.has(k.kind));
+      await Promise.all(sub.map(carregarTudo)); // buckets: entra até os arquivos; tabelas/views: entra até as linhas
+    };
+    await Promise.all(secoes.map(carregarTudo));
+    montarPlaneta(secoes);
+  })().finally(() => { abrindoReino = null; document.body.classList.remove('carregando'); });
+  return abrindoReino;
+}
+
+function descendentes(id) {
+  const out = [];
+  for (const n of nodes.values()) if (n.parent === id && n.type !== 'more') out.push(n, ...descendentes(n.id));
+  return out;
+}
+
+const ORDEM_KIND = { tabela: 0, view: 1, funcao: 2, edge: 3, bucket: 4, objeto: 5 };
+function montarPlaneta(secoes) {
+  sairPlaneta();
+  const membros = new Map(secoes.map((s) => [s.id, descendentes(s.id)
+    .sort((a, b) => (ORDEM_KIND[a.kind] ?? 9) - (ORDEM_KIND[b.kind] ?? 9) || a.name.localeCompare(b.name))]));
+  const total = [...membros.values()].reduce((t, m) => t + m.length, 0);
+  const raio = raioPlaneta(total);
+  const paises = distribuirPaises(secoes.map((s, i) => ({ id: s.id, n: membros.get(s.id).length, cor: CORES_PAISES[i % CORES_PAISES.length] })));
+  const ids = new Set();
+  const agora = performance.now();
+  const fixar = (n, pos, atraso) => {
+    ids.add(n.id);
+    pins.set(n.id, { mode: 'fixed', from: curPos(n), to: { x: pos.x, y: pos.y, z: pos.z }, t0: agora + atraso, dur: reduced ? 0 : 1800 });
+  };
+  for (const p of paises) {
+    const s = nodes.get(p.id);
+    fixar(s, p.dir.clone().multiplyScalar(raio + 16), 0);
+    s.__pais = p.cor;
+    s.__label?.element.style.setProperty('--c', p.cor);
+    s.__label?.element.classList.add('pais');
+    const lista = membros.get(p.id);
+    lista.forEach((n, k) => fixar(n, pontoNoPais(p, k, lista.length, raio + 3), reduced ? 0 : 120 + (k / lista.length) * 700));
+  }
+  planeta = { raio, ids, morrendo: false };
+  document.body.classList.add('planeta');
+  applyVisuals();
+  updateTrail();
+  const c = graph.controls();
+  c.autoRotate = !reduced;
+  c.autoRotateSpeed = 0.35;
+  camTo({ x: 0, y: raio * 0.55, z: raio * 3.1 }, { x: 0, y: 0, z: 0 }, 2400);
+  toast(`Reino aberto: ${total.toLocaleString('pt-BR')} conhecimentos em ${paises.length} países.`);
+}
+
+function sairPlaneta() {
+  if (!planeta) return;
+  for (const id of planeta.ids) {
+    pins.delete(id);
+    const n = nodes.get(id);
+    if (!n) continue;
+    delete n.fx; delete n.fy; delete n.fz;
+    if (n.__pais) { n.__label?.element.style.setProperty('--c', COLORS[n.kind] || COLORS.schema); n.__label?.element.classList.remove('pais'); delete n.__pais; }
+  }
+  planeta = null;
+  graph.controls().autoRotate = false;
+  document.body.classList.remove('planeta');
+  needReheat = true;
+  applyVisuals();
+}
+
 // ---------------- controles ----------------
 $('#btn-home').addEventListener('click', () => goBrain());
+$('#btn-reino').addEventListener('click', () => abrirReino());
+$('#btn-fechar').addEventListener('click', () => fecharTudo());
 $('#btn-voltar').addEventListener('click', () => goBack());
 $('#btn-avancar').addEventListener('click', () => goForward());
 $('#zoom-mais').addEventListener('click', () => zoom(0.75));
@@ -1294,7 +1417,39 @@ $('#zoom-menos').addEventListener('click', () => zoom(1.33));
 $('#nos-mais').addEventListener('click', () => resize(1.2));
 $('#nos-menos').addEventListener('click', () => resize(1 / 1.2));
 
+// ---------------- fundo quântico ----------------
+// public/quantico.html (cópia do wallpaper "Mundo Quântico") num iframe atrás do grafo. Desligado, o iframe volta
+// para about:blank e o shader para de gastar GPU.
+const quantico = $('#quantico');
+const btnQuantico = $('#btn-quantico');
+function setQuantico(ligado, lembrar = true) {
+  document.body.classList.toggle('quantico', ligado);
+  btnQuantico.setAttribute('aria-pressed', String(ligado));
+  const src = ligado ? `/quantico.html?fps=24&scale=0.4&hud=trilhas&centro=0.5${reduced ? '&parado=1' : ''}` : 'about:blank';
+  if (quantico.getAttribute('src') !== src) quantico.setAttribute('src', src);
+  if (lembrar) store.set('cerebro.quantico', ligado ? 'on' : 'off');
+}
+setQuantico(store.get('cerebro.quantico') !== 'off', false);
+btnQuantico.addEventListener('click', () => setQuantico(!document.body.classList.contains('quantico')));
+
+// ---------------- fios (estilo das linhas entre as pastas) ----------------
+const btnFios = $('#btn-fios');
+function atualizaBtnFios() {
+  btnFios.querySelector('b').textContent = FIO_ROTULO[fioEstilo];
+  btnFios.title = `Trocar o estilo dos fios entre as pastas (W) — agora: ${FIO_ROTULO[fioEstilo]}`;
+}
+function setFios(estilo, lembrar = true) {
+  fioEstilo = FIOS.includes(estilo) ? estilo : 'neural';
+  atualizaBtnFios();
+  refresh(); // recalcula a curvatura de todo fio já desenhado, não só dos novos
+  if (lembrar) store.set('cerebro.fios', fioEstilo);
+  toast(`Fios: ${FIO_ROTULO[fioEstilo]}`);
+}
+atualizaBtnFios();
+btnFios.addEventListener('click', () => setFios(FIOS[(FIOS.indexOf(fioEstilo) + 1) % FIOS.length]));
+
 // ---------------- atalhos de teclado ----------------
+const voz = iniciarVoz({ reveal, goBrain, toast, fecharTudo, abrirReino }); // Espaço: toque volta ao cérebro, segurar fala com o assistente
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (!visor.hidden) { // o visor fica com o teclado (Espaço pausa o vídeo etc.); Esc fecha
@@ -1312,11 +1467,19 @@ document.addEventListener('keydown', (e) => {
   } else if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
     if (t && t.tagName === 'BUTTON') t.blur();
-    if (!e.repeat) goBrain();
+    voz.espaco(e);
   } else if (k === 'q') {
     if (!e.repeat) goBack();
   } else if (k === 'e') {
     if (!e.repeat) goForward();
+  } else if (k === 'r') {
+    if (!e.repeat) abrirReino();
+  } else if (k === 'x') {
+    if (!e.repeat) fecharTudo();
+  } else if (k === 'f') {
+    if (!e.repeat) setQuantico(!document.body.classList.contains('quantico'));
+  } else if (k === 'w') {
+    if (!e.repeat) setFios(FIOS[(FIOS.indexOf(fioEstilo) + 1) % FIOS.length]);
   } else if (e.key === 'Escape') {
     hidePopup();
     spotlight = null;
@@ -1418,7 +1581,7 @@ function animate() {
   }
   // opacidade dos materiais: acesos pulsam, esmaecidos seguem o foco
   const dimOp = 1 - 0.9 * dimK;
-  bloom.strength = (reduced ? 0.7 : 1.0) * (1 - 0.3 * dimK);
+  bloom.strength = (reduced ? 0.7 : 1.0) * (1 - 0.3 * dimK) * (planeta ? 0.55 : 1); // o planeta é grande: bloom cheio estoura
   for (const m of matCache.values()) {
     const u = m.userData;
     if (u.dim) m.opacity = u.base * (u.line ? 1 - 0.8 * dimK : dimOp) * (u.line === 'neural' ? 0.9 : 1);
@@ -1444,7 +1607,11 @@ function fadeLabels() {
     if (!el) continue;
     if (helixIds.has(n.id)) { el.style.visibility = 'hidden'; continue; } // na hélice vale o rótulo do DNA
     const d = Math.hypot(cam.x - (n.x || 0), cam.y - (n.y || 0), cam.z - (n.z || 0));
-    let o = n.depth === 1 ? (XDG.has(n.name) ? 1 : Math.min(1, Math.max(0.5, 1.25 - d / 1100))) : Math.min(1, Math.max(0, 1.35 - d / 420));
+    if (planeta && planeta.ids.has(n.id)) { // lado de trás do planeta: sem rótulo
+      const r = Math.hypot(n.x || 0, n.y || 0, n.z || 0) * Math.hypot(cam.x, cam.y, cam.z) || 1;
+      if (((n.x || 0) * cam.x + (n.y || 0) * cam.y + (n.z || 0) * cam.z) / r < (n.depth === 1 ? -0.05 : 0.15)) { el.style.visibility = 'hidden'; continue; }
+    }
+    let o = n.depth === 1 ? (DESTAQUE.has(n.name) ? 1 : Math.min(1, Math.max(0.5, 1.25 - d / 1100))) : Math.min(1, Math.max(0, 1.35 - d / 420));
     if (n.__dimmed) o *= 1 - 0.85 * dimK;
     if (n.id === focusId) o = 1;
     if (n === hovered) o = 1;
@@ -1460,7 +1627,7 @@ async function boot() {
   try { info = await api('/api/info'); } catch { /* segue com padrão */ }
   $('#host').textContent = info.hostname;
   document.title = `Cérebro Babel · ${info.hostname}`;
-  const brain = { id: '#brain', type: 'brain', kind: 'pasta', name: info.hostname, path: '', depth: 0, fx: 0, fy: 0, fz: 0, expanded: true };
+  const brain = { id: '#brain', type: 'brain', kind: 'schema', name: info.hostname, path: '', depth: 0, fx: 0, fy: 0, fz: 0, expanded: true };
   nodes.set(brain.id, brain);
   graph.cameraPosition({ x: 0, y: 260, z: 1500 }, { x: 0, y: 0, z: 0 }, 0);
   refresh();
@@ -1474,7 +1641,7 @@ async function boot() {
   animate();
   // ganchos para os testes
   window.__cerebro = {
-    nodes, graph, reveal, toggle, flyTo, showPopup, navigate, goBack, goForward, goBrain, openVisor, closeVisor, flyToHelix,
+    nodes, links: () => links, graph, reveal, toggle, flyTo, showPopup, navigate, goBack, goForward, goBrain, openVisor, closeVisor, flyToHelix, dashboardUrl,
     setSpin: (v) => { spinOn = !!v; },
     clearHistory: () => { hist.back.length = 0; hist.fwd.length = 0; updateTrail(); },
     state: () => ({ focusId, back: hist.back.slice(), fwd: hist.fwd.slice(), helix: [...helixIds], dimK, camBusy: performance.now() < camBusyUntil, pins: pins.size, spin: helix.spin,
